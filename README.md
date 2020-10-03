@@ -1,4 +1,4 @@
-# Synthaetica
+# Synthætica
 
 A music/spaceship thing sort of inspired by moon patrol.
 Created in 48 hours for LD47.
