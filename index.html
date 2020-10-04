@@ -37,6 +37,27 @@ body {
 	width:100vw;
 }
 
+#help {
+	position:absolute;
+	top:0;
+	left:0;
+	width:100vw;
+	height:100vh;
+	display:flex;
+	flex-flow:column;
+	justify-content:center;
+	align-items:center;
+	background:#0008;
+}
+
+#helpInner {
+	background:#0008;
+	color:#fff;
+	font-size:3vh;
+	width:80vh;
+	padding:5vh;
+}
+
 #playPause {
 	position:absolute;
 	top:0;
@@ -54,12 +75,39 @@ body {
 #playPause.playing #play { color:#0008; }
 #playPause.playing #pause { color:#fff; }
 
+#help {
+}
+
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <div id="playPause"><span id="play">play</span>/<span id="pause">pause</span> (space)</div>
 <div id="info"></div>
+<div id="help">
+<div id="helpInner">
+<h1 style="margin:0;font-size:5vh">Synth&aelig;tica</h1>
+<p style="font-size:3vh">A <a href="https://ldjam.com/events/ludum-dare/47">LD48 #47</a> game by <a href="http://tchow.com">Jim McCann / TCHOW llc</a></p>
+<p>
+Click on the colored squares in the timeline at the bottom to control the ship, collect keys, and get to the star at the end.
+</p>
+<p><b>Ship Controls:</b>
+The first row (red) moves right, the second row (green) moves left, the third row (yellow) activates a shield, and the fourth row (purple) gives a burst of speed in the direction indicated by the first two rows.
+</p>
+<p>
+Space plays/pauses.
+</p>
+<p>
+You can move the looped portion of the timeline as well as the current playhead by click-dragging the grey rectangles at the top of the timeline.
+</p>
+<p>
+Collect keys to free the loop to move to other portions of the timeline.
+</p>
+<p>
+(click to hide this screen)
+</p>
+</div>
+</div>
 
 <script src="gl-helpers.js"></script>
 <script src="shaders.js"></script>

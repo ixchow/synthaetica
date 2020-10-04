@@ -11,6 +11,7 @@
 
 
 const INFO = document.getElementById("info");
+const HELP = document.getElementById("help");
 const PLAYPAUSE = document.getElementById("playPause");
 const CANVAS = document.getElementById("game");
 const gl = CANVAS.getContext("webgl", {
@@ -160,7 +161,7 @@ window.addEventListener('mousedown', function(evt){
 	setMouse(evt);
 	if (evt.target === CANVAS && !('drag' in MOUSE)) {
 		const hovered = MOUSE.getHovered();
-		console.log(hovered);
+		//console.log(hovered);
 		if (hovered.playhead) {
 			const wasPlaying = TRANSPORT.playing;
 			if (wasPlaying) pause();
@@ -267,6 +268,11 @@ window.addEventListener('keydown', function(evt){
 });
 
 window.addEventListener('click', function(evt){
+	if (HELP.style.display !== "none") {
+		evt.preventDefault();
+		HELP.style.display = "none";
+		return false;
+	}
 	if (evt.target === PLAYPAUSE) {
 		evt.preventDefault();
 		if (evt.button === 0) {
@@ -982,7 +988,7 @@ TERRAIN_BUFFER.update = function TERRAIN_BUFFER_update() {
 		};
 	}
 
-	console.log(attribs.length / stride + " terrain attribs.");
+	console.log(attribs.length / (stride/4) + " terrain attribs.");
 	this.count = attribs.length / (stride/4);
 };
 
@@ -1117,7 +1123,6 @@ TRACKS_BUFFER.update = function TRACKS_BUFFER_update() {
 		//upload and draw arrow attribs:
 		gl.bindBuffer(gl.ARRAY_BUFFER, this);
 		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(attribs), gl.STATIC_DRAW);
-		console.log("Uploaded ", attribs.length); //DEBUG
 
 		this.bind = function() {
 			gl.bindBuffer(gl.ARRAY_BUFFER, this);

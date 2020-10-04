@@ -53,7 +53,7 @@ MUSIC.play = function(bpm, startBeat, endBeat, mutes, time) {
 	const beatsToSeconds = 60.0 / bpm;
 	const timeBeat = Math.floor(time / beatsToSeconds);
 
-	console.log(mutes);
+	//console.log(mutes);
 
 	//schedule up a new segment of track:
 	for (let t = 0; t < this.tracks.length; ++t) {

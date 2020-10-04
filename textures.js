@@ -112,5 +112,5 @@ TEXTURES.load = async function TEXTURES_load(callback) {
 		0,0, 128,128,
 		5*128, 1*128
 	);
-	console.log(OBJECTS);
+	//console.log(OBJECTS);
 };
