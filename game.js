@@ -316,16 +316,22 @@ function States() {
 	this.ticks = LEVEL.ticksPerBeat * LEVEL.beatsPerMeasure * LEVEL.measures.length + 1;
 	this.ship = new Float32Array(6 * this.ticks);
 	this.enemies = []; //TODO!
-	this.sparks = new Int32Array(LEVEL.sparks.length);
+	this.keys = new Int32Array(LEVEL.keys.length);
+	this.unlockedUntilMeasure = 0;
 
 	// --- initial state ---
 
 	//ship is at starting position:
 	this.setShip(0, LEVEL.start);
 
-	//sparks all not collected:
-	for (let i = 0; i < this.sparks.length; ++i) {
-		this.sparks[i] = this.ticks + 1;
+	//keys all not collected:
+	for (let i = 0; i < this.keys.length; ++i) {
+		this.keys[i] = this.ticks + 1;
+	}
+	
+	//unlocked until the first measure with a lock:
+	while (this.unlockedUntilMeasure < LEVEL.measures.length && !LEVEL.measures[this.unlockedUntilMeasure].locked) {
+		++this.unlockedUntilMeasure;
 	}
 
 	//computation needs to start at tick 1:
@@ -351,6 +357,15 @@ States.prototype.getShip = function States_getShip(tick) {
 	};
 	return ship;
 };
+States.prototype.getKeys = function States_getKeys(tick) {
+	let count = 0;
+	for (let i = 0; i < this.keys.length; ++i) {
+		if (this.keys[i] <= tick) {
+			++count;
+		}
+	}
+	return count;
+};
 
 States.prototype.interpolate = function States_interpolate(time, DEBUG) {
 	let amt = time / 60.0 * (LEVEL.beatsPerMinute * LEVEL.ticksPerBeat);
@@ -372,16 +387,16 @@ States.prototype.interpolate = function States_interpolate(time, DEBUG) {
 
 	let from = {
 		ship:this.getShip(tick),
-		sparks:[]
+		keys:[]
 	};
 	if (glitch) from.glitch = true;
 
-	//fill in sparks by comparison:
-	for (let i = 0; i < this.sparks.length; ++i) {
-		if (this.sparks[i] <= tick) {
-			from.sparks[i] = tick;
+	//fill in keys by comparison:
+	for (let i = 0; i < this.keys.length; ++i) {
+		if (this.keys[i] <= tick) {
+			from.keys[i] = this.keys[i];
 		} else {
-			from.sparks[i] = null;
+			from.keys[i] = null;
 		}
 	}
 	if (amt == 0.0) return from;
@@ -405,6 +420,8 @@ const DISH_RADIUS = 0.6;
 const SHIP_MASS = 1.0;
 const SHIP_MOMENT = SHIP_MASS * (GLOBE_RADIUS * GLOBE_RADIUS);
 const JET_THRUST = SHIP_MASS * GRAVITY * 0.75;
+
+const KEY_RADIUS = 0.25;
 
 const MAX_ROTATION = 2.0 * Math.PI * 5.0;
 const MAX_VELOCITY = 10.0;
@@ -477,11 +494,58 @@ States.prototype.calculate = function States_calculate() {
 
 	ship.r = ship.r % (2.0 * Math.PI);
 
-	if (this.dirty < 10) {
-		console.log(this.dirty, ship, delta);
+	this.setShip(this.dirty, ship);
+
+	// ---- key collection ---
+
+	let haveKeys = 0;
+	for (let i = 0; i < this.keys.length; ++i) {
+		if (this.keys[i] == this.dirty) {
+			this.keys[i] = this.ticks + 1; //mark as uncollected
+		}
+		//any key not yet collected is fair game for collection:
+		if (this.keys[i] >= this.dirty) {
+			const x = LEVEL.keys[i].x;
+			const y = LEVEL.keys[i].y;
+			let dis2 = (x-ship.x)*(x-ship.x) + (y-ship.y)*(y-ship.y);
+			if (dis2 < (GLOBE_RADIUS+KEY_RADIUS)*(GLOBE_RADIUS+KEY_RADIUS)) {
+				this.keys[i] = this.dirty;
+			}
+		}
+		if (this.keys[i] <= this.dirty) {
+			haveKeys += 1;
+		}
 	}
 
-	this.setShip(this.dirty, ship);
+	// --- unlocked update --
+	if ((this.dirty % (LEVEL.ticksPerBeat * LEVEL.beatsPerMeasure)) === 0) {
+		//entering a new measure.
+		let measure = this.dirty / (LEVEL.ticksPerBeat * LEVEL.beatsPerMeasure);
+		//console.log("Entering " + measure + " with " + haveKeys + " keys.");
+		if (measure <= this.unlockedUntilMeasure) {
+			let locks = 0;
+			let newUIM = 0;
+			for (let m = 0; m < LEVEL.measures.length; ++m) {
+				if (LEVEL.measures[m].locked) locks += 1;
+				if (locks > haveKeys) {
+					newUIM = m;
+					break;
+				}
+			}
+			if (locks <= haveKeys) {
+				newUIM = LEVEL.measures.length;
+			}
+			if (measure === newUIM || measure === this.unlockedUntilMeasure) {
+				this.unlockedUntilMeasure = newUIM;
+			}
+			//console.log("Unlocked until " + this.unlockedUntilMeasure + " with " + locks + " locks.");
+		}
+	}
+
+	if (this.dirty < 10) {
+		//console.log(this.dirty, ship, delta);
+	}
+
 
 	this.dirty += 1;
 
@@ -547,8 +611,6 @@ function setLoop(loop_start, loop_end) {
 }
 
 
-
-
 function update(elapsed) {
 	if (!LOADED) {
 		draw();
@@ -563,6 +625,10 @@ function update(elapsed) {
 	STATES.calculate();
 	STATES.calculate();
 	STATES.calculate();
+
+	if (TRANSPORT.loop_end > STATES.unlockedUntilMeasure) {
+		setLoop(Math.min(TRANSPORT.loop_start, STATES.unlockedUntilMeasure-1), STATES.unlockedUntilMeasure);
+	}
 
 	if (TERRAIN_BUFFER.dirty) TERRAIN_BUFFER.update();
 	if (TRACKS_BUFFER.dirty) TRACKS_BUFFER.update();
@@ -794,6 +860,10 @@ setLoop(3,4);
 
 //------------------------------
 
+const PICKUP_DIRS = [];
+for (let i = 0; i < 10; ++i) {
+	PICKUP_DIRS.push({x:Math.random()*2-1, y:Math.random()*2-1});
+}
 
 const MISC_BUFFER = gl.createBuffer();
 
@@ -868,7 +938,6 @@ function draw() {
 				obj.maxX / TEXTURES.objects.width, 1.0 - obj.maxY / TEXTURES.objects.height,
 				...tint
 			);
-
 		}
 
 		//texRect(CAMERA.x,CAMERA.y, 1,0, 0.5*CAMERA.radius,0.5*CAMERA.radius, 0,0,1,1); //DEBUG
@@ -889,17 +958,68 @@ function draw() {
 			drawObject("shipDish", at.x+right.x*DISH_RADIUS,at.y+right.y*DISH_RADIUS, right.x,right.y, Infinity,0.3, TRACK_COLORS[1]);
 			drawObject("shipDish", at.x-right.x*DISH_RADIUS,at.y-right.y*DISH_RADIUS, -right.x,-right.y, Infinity,0.3, TRACK_COLORS[1]);
 		}
+
+		function pickupEffect(ofs,amt, name, x,y, rx,ry, sx,sy) {
+			let tint = [1.0, 1.0, 1.0, 1.0-amt];
+			for (const d of PICKUP_DIRS) {
+				drawObject(name, x+amt*d.x,y+amt*d.y, rx,ry, (1.0-amt)*sx,(1.0-amt)*sy, tint);
+			}
+		}
+
+		for (let i = 0; i < state.keys.length; ++i) { //draw keys:
+			if (state.keys[i] === null) {
+				drawObject("key", LEVEL.keys[i].x,LEVEL.keys[i].y, 1,0, Infinity,2*KEY_RADIUS);
+			} else {
+				const age = TRANSPORT.playhead - (state.keys[i] * 60 / (LEVEL.ticksPerBeat * LEVEL.beatsPerMinute));
+				if (age < 0.5) {
+					pickupEffect(state.keys[i], age/0.5, "key",LEVEL.keys[i].x,LEVEL.keys[i].y, 1,0, 2*KEY_RADIUS,2*KEY_RADIUS);
+				}
+			}
+			
+		}
 	}
 
-	let uiAttribs = []; //(x,y, r,g,b,a)
+	let uiAttribs = []; //(x,y, tx,ty, r,g,b,a)
 
 	function uiRect(x, y, w, h, c0, c1, c2, c3) {
-		if (uiAttribs.length > 0) uiAttribs.push(...uiAttribs.slice(-6));
-		uiAttribs.push(x,y,...c0);
-		if (uiAttribs.length !== 6) uiAttribs.push(...uiAttribs.slice(-6));
-		uiAttribs.push(x,y+h,...c1);
-		uiAttribs.push(x+w,y,...c2);
-		uiAttribs.push(x+w,y+h,...c3);
+		if (uiAttribs.length > 0) uiAttribs.push(...uiAttribs.slice(-8));
+		uiAttribs.push(x,y, 0,0, ...c0);
+		if (uiAttribs.length !== 8) uiAttribs.push(...uiAttribs.slice(-8));
+		uiAttribs.push(x,y+h, 0,0, ...c1);
+		uiAttribs.push(x+w,y, 0,0, ...c2);
+		uiAttribs.push(x+w,y+h, 0,0, ...c3);
+	}
+
+	function uiObject(name, x,y, szX,szY, tint) {
+		if (typeof(tint) === 'undefined') tint = [1,1,1,1];
+		if (tint.length === 3) tint = [...tint, 1];
+
+		const obj = OBJECTS[name];
+		const scaleY = Math.min( szX / (obj.sizeX / CANVAS.aspect), szY / obj.sizeY );
+		const scaleX = scaleY / CANVAS.aspect;
+
+		if (uiAttribs.length > 0) uiAttribs.push(...uiAttribs.slice(-8));
+		uiAttribs.push(
+			x + scaleX * (-obj.anchorX + obj.minX), y + scaleY * (-obj.anchorY + obj.minY),
+			obj.minX / TEXTURES.objects.width, 1.0 - obj.minY / TEXTURES.objects.height,
+			...tint
+		);
+		if (uiAttribs.length !== 8) uiAttribs.push(...uiAttribs.slice(-8));
+		uiAttribs.push(
+			x + scaleX * (-obj.anchorX + obj.maxX), y + scaleY * (-obj.anchorY + obj.minY),
+			obj.maxX / TEXTURES.objects.width, 1.0 - obj.minY / TEXTURES.objects.height,
+			...tint
+		);
+		uiAttribs.push(
+			x + scaleX * (-obj.anchorX + obj.minX), y + scaleY * (-obj.anchorY + obj.maxY),
+			obj.minX / TEXTURES.objects.width, 1.0 - obj.maxY / TEXTURES.objects.height,
+			...tint
+		);
+		uiAttribs.push(
+			x + scaleX * (-obj.anchorX + obj.maxX), y + scaleY * (-obj.anchorY + obj.maxY),
+			obj.maxX / TEXTURES.objects.width, 1.0 - obj.maxY / TEXTURES.objects.height,
+			...tint
+		);
 	}
 
 	if (STATES.dirty < STATES.ticks) { //statehead:
@@ -942,6 +1062,8 @@ function draw() {
 			[1.0,1.0,0.9,0.3]
 		);
 	}
+
+
 
 	{ //playhead:
 		let beat = TRANSPORT.playhead / 60.0 * LEVEL.beatsPerMinute;
@@ -1001,6 +1123,46 @@ function draw() {
 		let c = (hovered.loop_end ? [1.0, 1.0, 0.9, 1.0] : [0.8, 0.8, 0.8, 1.0]);
 		uiRect(x - 0.5 * w, -1.0 + ROLL_HEIGHT, w, h, c,c,c,c);
 	}
+
+	//key markers:
+	for (let i = 0; i < STATES.keys.length; ++i) {
+		let tick = STATES.keys[i];
+		if (tick <= STATES.ticks) {
+			let measure = tick / (LEVEL.ticksPerBeat * LEVEL.beatsPerMeasure);
+			let amt = measure - Math.floor(measure);
+			measure = Math.floor(measure);
+
+			let x0 = TRANSPORT.measurePos[measure];
+			let x1 = TRANSPORT.measurePos[measure+1];
+
+			let x = amt * (x1-x0) + x0;
+
+			uiObject("key", x,-1.0+ROLL_HEIGHT + HANDLE_HEIGHT, Infinity,1.8*HANDLE_HEIGHT);
+		}
+	}
+
+
+	//locks:
+	for (let i = LEVEL.measures.length - 1; i >= 0; --i) {
+		const m = LEVEL.measures[i];
+		if (m.locked) {
+			const x0 = TRANSPORT.measurePos[i];
+			if (i < STATES.unlockedUntilMeasure) {
+				const y = -1.0 + ROLL_HEIGHT;
+				uiObject("unlocked", x0, y, Infinity,2*HANDLE_HEIGHT);
+			} else {
+				const y = -1.0 + 0.5 * ROLL_HEIGHT;
+				const end = TRANSPORT.measurePos[TRANSPORT.measurePos.length-1];
+				const c0 = [0,0,0,1];
+				const c1 = [0.2,0.2,0.2,0.5];
+				uiRect(x0,-1.0, 0.03,ROLL_HEIGHT, c0,c0,c1,c1);
+				uiRect(x0+0.03,-1.0, end-(x0+0.03),ROLL_HEIGHT, c1,c1,c1,c1);
+				uiObject("locked", x0, y, Infinity,2*HANDLE_HEIGHT);
+			}
+		}
+	}
+
+
 
 	//--------- actually drawing now -----------
 
@@ -1090,7 +1252,7 @@ function draw() {
 
 
 	if (uiAttribs.length) {
-		let prog = SHADERS.color;
+		let prog = SHADERS.textureColor;
 
 		const u = {};
 
@@ -1101,21 +1263,30 @@ function draw() {
 			0.0, 0.0, 0.0, 1.0
 		]);
 
+		u.uTex = [0];
+
 		setUniforms(prog, u);
 
 		//upload and draw arrow attribs:
 		gl.bindBuffer(gl.ARRAY_BUFFER, MISC_BUFFER);
 		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uiAttribs), gl.STREAM_DRAW);
 
-		const stride = 2*4+4*4;
+		const stride = 2*4+2*4+4*4;
 		//0 => Position
 		gl.enableVertexAttribArray(0);
 		gl.vertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0);
 		//1 => Color
 		gl.enableVertexAttribArray(1);
-		gl.vertexAttribPointer(1, 4, gl.FLOAT, false, stride, 2*4);
+		gl.vertexAttribPointer(1, 4, gl.FLOAT, false, stride, 2*4+2*4);
+		//2 => TexCoord
+		gl.enableVertexAttribArray(2);
+		gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 2*4);
+
+		gl.bindTexture(gl.TEXTURE_2D, TEXTURES["objects"]);
 
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, uiAttribs.length/(stride/4));
+
+		gl.bindTexture(gl.TEXTURE_2D, null);
 	}
 }
 

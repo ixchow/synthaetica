@@ -45,7 +45,7 @@ TEXTURES.load = async function TEXTURES_load(callback) {
 	}
 	add("shipGlass",
 		64,64, 96,96,
-		0,0, 128,128
+		8,8, 120,120
 	);
 	add("shipBeam",
 		64,64, 96,16,
@@ -61,6 +61,21 @@ TEXTURES.load = async function TEXTURES_load(callback) {
 		16,64, 48,96,
 		0,0, 80,128,
 		3*128, 0
+	);
+	add("key",
+		64,64, 48,112,
+		32,0, 96,128,
+		4*128, 0
+	);
+	add("locked",
+		16,48, 64,112,
+		16,0, 112,128,
+		5*128, 0
+	);
+	add("unlocked",
+		64,0, 64,112,
+		16,0, 112,128,
+		6*128, 0
 	);
 	console.log(OBJECTS);
 };
