@@ -11,6 +11,7 @@
 
 
 const INFO = document.getElementById("info");
+const PLAYPAUSE = document.getElementById("playPause");
 const CANVAS = document.getElementById("game");
 const gl = CANVAS.getContext("webgl", {
 		alpha:false,
@@ -266,19 +267,14 @@ window.addEventListener('keydown', function(evt){
 });
 
 window.addEventListener('click', function(evt){
-/*
-	evt.preventDefault();
-	if (evt.target === PREV) {
-		prevLevel();
-	} else if (evt.target === NEXT) {
-		nextLevel();
-	} else if (evt.target === UNDO) {
-		undo();
-	} else if (evt.target === RESET) {
-		reset();
+	if (evt.target === PLAYPAUSE) {
+		evt.preventDefault();
+		if (evt.button === 0) {
+			if (TRANSPORT.playing) pause();
+			else play();
+		}
+		return false;
 	}
-	return false;
-*/
 });
 
 const ROLL_HEIGHT = 0.3; //relative to [-1,1] y-axis
@@ -301,10 +297,12 @@ const TRANSPORT = {
 function pause() {
 	TRANSPORT.playing = false;
 	MUSIC.stop();
+	PLAYPAUSE.classList.remove("playing");
 }
 
 function play() {
 	TRANSPORT.playing = true;
+	PLAYPAUSE.classList.add("playing");
 	let muted = [ [], [], [], [] ];
 	for (let beat = TRANSPORT.loop_start * LEVEL.beatsPerMeasure; beat < TRANSPORT.loop_end * LEVEL.beatsPerMeasure; ++beat) {
 		const c = CONTROLS[beat];
@@ -435,6 +433,20 @@ States.prototype.interpolate = function States_interpolate(time, DEBUG) {
 		ship:this.getShip(tick),
 		keys:[]
 	};
+	if (CONTROLS[Math.floor(tick / LEVEL.ticksPerBeat)] & (1 << 3)) {
+		from.left = true;
+	}
+	if (CONTROLS[Math.floor(tick / LEVEL.ticksPerBeat)] & (1 << 2)) {
+		from.right = true;
+	}
+	if (CONTROLS[Math.floor(tick / LEVEL.ticksPerBeat)] & (1 << 1)) {
+		from.shield = true;
+	}
+	if (CONTROLS[Math.floor(tick / LEVEL.ticksPerBeat)] & (1 << 0)) {
+		let srcTick = Math.floor(tick / LEVEL.ticksPerBeat) * LEVEL.ticksPerBeat;
+		let src = this.getShip(srcTick);
+		from.jump = {x:src.x, y:src.y, time:srcTick / (LEVEL.ticksPerBeat * LEVEL.beatsPerMinute) * 60.0};
+	}
 	if (glitch) from.glitch = true;
 
 	//fill in keys by comparison:
@@ -461,11 +473,12 @@ States.prototype.interpolate = function States_interpolate(time, DEBUG) {
 
 const GRAVITY = 2.0;
 const GLOBE_RADIUS = 0.3;
+const SHIELD_RADIUS = 1.0;
 const JET_RADIUS = 0.45;
 const DISH_RADIUS = 0.6;
 const SHIP_MASS = 1.0;
 const SHIP_MOMENT = SHIP_MASS * (GLOBE_RADIUS * GLOBE_RADIUS);
-const JET_THRUST = SHIP_MASS * GRAVITY * 0.75;
+const JET_THRUST = SHIP_MASS * GRAVITY * 1.5;
 
 const KEY_RADIUS = 0.25;
 
@@ -486,15 +499,15 @@ States.prototype.calculate = function States_calculate() {
 		let val = CONTROLS[Math.floor((this.dirty-1) / LEVEL.ticksPerBeat)];
 		controls.left = val & (1 << 3);
 		controls.right = val & (1 << 2);
-		controls.beam = val & (1 << 1);
-		controls.grab = val & (1 << 0);
+		controls.shield = val & (1 << 1);
+		controls.jump = val & (1 << 0);
 	}
 
 	{ //damping:
 		const fac = Math.pow(0.5, delta / 1.5);
 		ship.vx *= fac;
 		ship.vy *= fac;
-		ship.vr *= fac;
+		ship.vr *= Math.pow(0.5, delta / 0.25);
 	}
 
 	//gravity:
@@ -503,7 +516,14 @@ States.prototype.calculate = function States_calculate() {
 	function applyForce(x,y,fx,fy) {
 		ship.vx += delta * fx / SHIP_MASS;
 		ship.vy += delta * fy / SHIP_MASS;
-		ship.vr += delta * (fx * -y + fy * x) / SHIP_MOMENT;
+		//ship.vr += delta * (fx * -y + fy * x) / SHIP_MOMENT;
+	}
+
+	function angleServo(r, k) {
+		if (ship.r + Math.PI < r) r -= 2.0 * Math.PI;
+		if (ship.r - Math.PI > r) r += 2.0 * Math.PI;
+		let d = r - ship.r;
+		ship.vr += delta * k * d;
 	}
 
 	{ //jets:
@@ -521,6 +541,54 @@ States.prototype.calculate = function States_calculate() {
 		if (controls.left) {
 			applyForce(right.x * -JET_RADIUS, right.y * -JET_RADIUS, JET_THRUST*up.x, JET_THRUST*up.y);
 		}
+		if (controls.right && controls.left) {
+			angleServo(0.0, 10.0);
+		} else if (controls.right) {
+			angleServo(0.3 * Math.PI, 10.0);
+		} else if (controls.left) {
+			angleServo(-0.3 * Math.PI, 10.0);
+		} else {
+			angleServo(0.0, 0.5);
+		}
+	}
+
+	/*
+	{ //teleportation (?):
+		if (controls.jump && (this.dirty % LEVEL.ticksPerBeat) === 0) {
+			let dx = ship.vx;
+			let dy = ship.vy;
+			let len = Math.sqrt(dx*dx + dy*dy);
+			if (len == 0) {
+				dx = 0.0;
+				dy = 1.0;
+			} else {
+				dx = dx / len;
+				dy = dy / len;
+			}
+			const JUMP_LENGTH = 3.0;
+			dx *= JUMP_LENGTH;
+			dy *= JUMP_LENGTH;
+			ship.x += dx;
+			ship.y += dy;
+		}
+	}
+	*/
+	{ //handbrake (sort of):
+		if (controls.jump && (this.dirty % LEVEL.ticksPerBeat) === 1) {
+			let dx, dy;
+			if (controls.left && controls.right) {
+				dx = 0.0; dy = 1.0;
+			} else if (controls.left) {
+				dx = 1.0; dy = 0.0;
+			} else if (controls.right) {
+				dx = -1.0; dy = 0.0;
+			} else {
+				dx = 0.0; dy = -1.0;
+			}
+			const JUMP_VELOCITY = 2.5;
+			ship.vx = (ship.vx * 0.5) + JUMP_VELOCITY * dx;
+			ship.vy = (ship.vy * 0.5) + JUMP_VELOCITY * dy;
+		}
 	}
 
 	//absolute limits on speed:
@@ -534,9 +602,15 @@ States.prototype.calculate = function States_calculate() {
 		}
 	}
 
-	ship.x += delta * ship.vx;
-	ship.y += delta * ship.vy;
-	ship.r += delta * ship.vr;
+	if (controls.shield) {
+		ship.x += 0.5 * delta * ship.vx;
+		ship.y += 0.5 * delta * ship.vy;
+		ship.r += 0.5 * delta * ship.vr;
+	} else {
+		ship.x += delta * ship.vx;
+		ship.y += delta * ship.vy;
+		ship.r += delta * ship.vr;
+	}
 
 	ship.r = ship.r % (2.0 * Math.PI);
 
@@ -1004,15 +1078,53 @@ function draw() {
 		{ //draw ship:
 			let at = {x:state.ship.x, y:state.ship.y};
 			let right = {x:Math.cos(state.ship.r), y:Math.sin(state.ship.r)};
+
+			if (state.jump) {
+				let amt = (TRANSPORT.playhead - state.jump.time) / (0.75 * 60.0 / LEVEL.beatsPerMinute);
+				console.log(amt);
+				if (amt < 1.0) {
+					let jr = {x:Math.cos(20*amt-TRANSPORT.playhead), y:Math.sin(20*amt-TRANSPORT.playhead)};
+					let r = GLOBE_RADIUS * (1 + 6*amt*amt);
+					let a = 1.0 - amt*amt;
+					drawObject("shipCore", state.jump.x,state.jump.y, jr.x,jr.y, 2*r,2*r, [1,1,1,a]);
+					drawObject("shipCore", state.jump.x,state.jump.y, -jr.x,jr.y, 1.8*r,1.8*r, [1,1,1,0.5*a]);
+				}
+			}
+
+			if (state.shield) {
+				drawObject("shipShieldBack", at.x,at.y, right.x,right.y, 2*SHIELD_RADIUS,2*SHIELD_RADIUS);
+			}
+
 			drawObject("shipBeam", at.x,at.y, right.x,right.y, 2*DISH_RADIUS,Infinity);
 
-			drawObject("shipGlass", at.x,at.y, right.x,right.y, 2*GLOBE_RADIUS,2*GLOBE_RADIUS);
+			let coreRight = {x:Math.cos(state.ship.r+TRANSPORT.playhead), y:Math.sin(state.ship.r+TRANSPORT.playhead)};
+
+			drawObject("shipCore", at.x,at.y, coreRight.x,coreRight.y, 2*GLOBE_RADIUS,2*GLOBE_RADIUS);
+			drawObject("shipGlass", at.x,at.y, 1,0, 2*GLOBE_RADIUS,2*GLOBE_RADIUS);
+
+			if (state.right) {
+				//TEST:
+				let amt = 0.2 * Math.random();
+				drawObject("jetPlume", at.x+right.x*JET_RADIUS-right.y*-0.1,at.y+right.y*JET_RADIUS+right.x*-0.1, right.x,right.y,
+					Infinity, 0.3 - 0.2*amt, [...TRACK_COLORS[2],0.4 + 0.2 * amt]);
+			}
+
+			if (state.left) {
+				//TEST:
+				let amt = 0.2 * Math.random();
+				drawObject("jetPlume", at.x-right.x*JET_RADIUS-right.y*-0.1,at.y-right.y*JET_RADIUS+right.x*-0.1, right.x,right.y,
+					Infinity, 0.3 - 0.2*amt, [...TRACK_COLORS[3],0.4 + 0.2 * amt]);
+			}
 
 			drawObject("shipJet", at.x+right.x*JET_RADIUS,at.y+right.y*JET_RADIUS, right.x,right.y, Infinity, 0.3, TRACK_COLORS[2]);
 			drawObject("shipJet", at.x-right.x*JET_RADIUS,at.y-right.y*JET_RADIUS, right.x,right.y, Infinity, 0.3, TRACK_COLORS[3]);
 
 			drawObject("shipDish", at.x+right.x*DISH_RADIUS,at.y+right.y*DISH_RADIUS, right.x,right.y, Infinity,0.3, TRACK_COLORS[1]);
 			drawObject("shipDish", at.x-right.x*DISH_RADIUS,at.y-right.y*DISH_RADIUS, -right.x,-right.y, Infinity,0.3, TRACK_COLORS[1]);
+
+			if (state.shield) {
+				drawObject("shipShield", at.x,at.y, right.x,right.y, 2*SHIELD_RADIUS,2*SHIELD_RADIUS);
+			}
 		}
 
 		function pickupEffect(ofs,amt, name, x,y, rx,ry, sx,sy) {

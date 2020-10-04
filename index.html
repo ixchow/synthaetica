@@ -36,10 +36,29 @@ body {
 	left:0;
 	width:100vw;
 }
+
+#playPause {
+	position:absolute;
+	top:0;
+	left:0;
+	color:#fff8;
+	background:#0008;
+	font-size:5vh;
+}
+#play, #pause {
+	pointer-events:none;
+}
+
+#playPause #play { color:#fff; }
+#playPause #pause { color:#0008; }
+#playPause.playing #play { color:#0008; }
+#playPause.playing #pause { color:#fff; }
+
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="playPause"><span id="play">play</span>/<span id="pause">pause</span> (space)</div>
 <div id="info"></div>
 
 <script src="gl-helpers.js"></script>
