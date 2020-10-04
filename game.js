@@ -605,6 +605,12 @@ function setLoop(loop_start, loop_end) {
 	TRANSPORT.loop_start = loop_start;
 	TRANSPORT.loop_end = loop_end;
 
+	let start = TRANSPORT.loop_start * LEVEL.beatsPerMeasure / (LEVEL.beatsPerMinute / 60.0);
+	TRANSPORT.playhead = Math.max(TRANSPORT.playhead, start);
+
+	let end = TRANSPORT.loop_end * LEVEL.beatsPerMeasure / (LEVEL.beatsPerMinute / 60.0);
+	TRANSPORT.playhead = Math.min(TRANSPORT.playhead, end);
+
 	//set measure positions:
 	const LOOP_FACTOR = 1.0; //selected measures should be this much longer than unselected
 	const loop_measures = loop_end - loop_start;
@@ -760,21 +766,16 @@ TRACKS_BUFFER.update = function TRACKS_BUFFER_update() {
 		let w = (x1 - x0) / LEVEL.beatsPerMeasure;
 
 		for (let beat = 0; beat < LEVEL.beatsPerMeasure; ++beat) {
-			let a;
+			let c;
 			if (beat === 0) {
-				a = 0.1;
+				c = [1,1,1,0.1];
 			} else if (beat % 2 === 0) {
-				a = 0.05;
+				c = [0,0,0,0.1];
 			} else {
 				continue;
 			}
 
-			rect(x0+w*beat, -1.0, w, ROLL_HEIGHT,
-				[1,1,1, a],
-				[1,1,1, a],
-				[1,1,1, a],
-				[1,1,1, a]
-			);
+			rect(x0+w*beat, -1.0, w, ROLL_HEIGHT, c,c,c,c);
 		}
 	}
 
