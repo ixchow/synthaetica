@@ -7,17 +7,25 @@
 body {
 	margin:0;
 	padding:0;
-	background:#544;
+	background:#002;
+	width:100vw;
+	height:100vh;
+	display:flex;
+	justify-content:center;
+	align-items:center;
 }
 #game {
 	display:block;
-	position:absolute;
-	top:0;
-	left:0;
 	width:100vw;
-	height:100vh;
+	height:50vw;
 	padding:0;
-	background:#988;
+	margin:0;
+}
+@media (min-aspect-ratio: 2/1) {
+	#game {
+		width:200vh;
+		height:100vh;
+	}
 }
 #info {
 	font-size:5vh;

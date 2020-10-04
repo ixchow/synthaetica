@@ -250,6 +250,14 @@ window.addEventListener('mouseup', function(evt){
 	return false;
 });
 
+window.addEventListener('keydown', function(evt){
+	if (evt.code === "Space") {
+		evt.preventDefault();
+		TRANSPORT.playing = !TRANSPORT.playing;
+		return false;
+	}
+});
+
 window.addEventListener('click', function(evt){
 /*
 	evt.preventDefault();
@@ -266,7 +274,7 @@ window.addEventListener('click', function(evt){
 */
 });
 
-const ROLL_HEIGHT = 0.4; //relative to [-1,1] y-axis
+const ROLL_HEIGHT = 0.3; //relative to [-1,1] y-axis
 const HANDLE_HEIGHT = 0.05;
 
 const CAMERA = {
@@ -378,10 +386,13 @@ States.prototype.interpolate = function States_interpolate(time, DEBUG) {
 		tick = 0;
 		amt = 0.0;
 		glitch = true;
-	} if (tick > this.dirty - 1) {
-		tick = this.dirty - 1;
-		amt = 0.0;
+	}
+	if (tick >= this.dirty) {
 		glitch = true;
+	}
+	if (tick == this.dirty - 1) {
+		//avoid interpolating into dirty frames
+		amt = 0.0;
 	}
 	if (DEBUG) console.log(tick, amt); //DEBUG
 
@@ -595,7 +606,7 @@ function setLoop(loop_start, loop_end) {
 	TRANSPORT.loop_end = loop_end;
 
 	//set measure positions:
-	const LOOP_FACTOR = 4.0; //selected measures should be this much longer than unselected
+	const LOOP_FACTOR = 1.0; //selected measures should be this much longer than unselected
 	const loop_measures = loop_end - loop_start;
 	const other_measures = LEVEL.measures.length - loop_measures + 0.5; //quarter-measure of padding on the ends
 	const scale = 2.0 / (LOOP_FACTOR * loop_measures + other_measures);
@@ -856,7 +867,7 @@ TRACKS_BUFFER.update = function TRACKS_BUFFER_update() {
 TRANSPORT.playhead = NaN;
 setTime(0.0);
 TRANSPORT.loop_start = TRANSPORT.loop_end = NaN;
-setLoop(3,4);
+setLoop(0,4);
 
 //------------------------------
 
