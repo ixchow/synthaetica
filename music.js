@@ -53,23 +53,27 @@ MUSIC.play = function(bpm, startBeat, endBeat, mutes, time) {
 	const beatsToSeconds = 60.0 / bpm;
 	const timeBeat = Math.floor(time / beatsToSeconds);
 
+	console.log(mutes);
+
 	//schedule up a new segment of track:
 	for (let t = 0; t < this.tracks.length; ++t) {
 		const source = audioContext.createBufferSource();
 		source.buffer = this.tracks[t];
 		const gain = audioContext.createGain();
-		if (mutes.length > t) {
+		if (t < mutes.length) {
+			console.assert(mutes[t].length == endBeat - startBeat); //DEBUG
+			console.assert(timeBeat >= startBeat); //DEBUG
 			const m = mutes[t];
-			if (m[timeBeat]) {
+			if (m[timeBeat - startBeat]) {
 				gain.gain.value = 0.0;
 			} else {
 				gain.gain.value = 1.0;
 			}
 			for (let beat = timeBeat + 1; beat < endBeat; ++beat) {
-				if (m[beat] != m[beat-1]) {
+				if (m[beat - startBeat] != m[beat-1 - startBeat]) {
 					const t0 = beat * beatsToSeconds - time + now;
 					const t1 = t0 + 1.0 / 60.0;
-					if (m[beat]) {
+					if (m[beat - startBeat]) {
 						gain.gain.setValueAtTime(1.0, t0);
 						gain.gain.linearRampToValueAtTime(0.0, t1);
 					} else {
