@@ -564,13 +564,13 @@ States.prototype.calculate = function States_calculate() {
 
 const STATES = new States();
 
-//DEBUG: init controls somehow:
+/*//DEBUG: init controls somehow:
 for (let i = 0; i < CONTROLS.length; ++i) {
 	if ((i % 20) < 5)     CONTROLS[i] |= 1;
 	if (i % 10 > 3)       CONTROLS[i] |= 2;
 	if ((i / 10) % 2)     CONTROLS[i] |= 4;
 	if ((i + 4) % 13 < 3) CONTROLS[i] |= 8;
-}
+}*/
 
 function setTime(time) {
 	if (TRANSPORT.playhead == time) return;
@@ -578,24 +578,13 @@ function setTime(time) {
 
 	let beat = TRANSPORT.playhead / 60.0 * LEVEL.beatsPerMinute;
 	{ //set camera position:
-		let i = 0;
-		while (i + 1 < LEVEL.camera.length && LEVEL.camera[i+1].beat < beat) {
-			++i;
-		}
-		CAMERA.beat = beat; //DEBUG
-		CAMERA.i = i; //DEBUG
+		let i = Math.max(0, Math.min(LEVEL.camera.length-2, Math.floor(beat)));
 		const from = LEVEL.camera[i];
 		const to = LEVEL.camera[i+1];
-		if (beat <= from.beat) {
-			CAMERA.x = from.x; CAMERA.y = from.y; CAMERA.radius = from.radius;
-		} else if (beat >= to.beat) {
-			CAMERA.x = to.x; CAMERA.y = to.y; CAMERA.radius = to.radius;
-		} else {
-			const amt = (beat - from.beat) / (to.beat - from.beat);
-			CAMERA.x = amt * (to.x - from.x) + from.x;
-			CAMERA.y = amt * (to.y - from.y) + from.y;
-			CAMERA.radius = amt * (to.radius - from.radius) + from.radius;
-		}
+		const amt = Math.max(0, Math.min(1, beat - i));
+		CAMERA.x = amt * (to.x - from.x) + from.x;
+		CAMERA.y = amt * (to.y - from.y) + from.y;
+		CAMERA.radius = amt * (to.radius - from.radius) + from.radius;
 	}
 }
 
