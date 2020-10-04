@@ -129,7 +129,7 @@ MOUSE.getHovered = function MOUSE_getHovered() {
 	}
 	//set track:
 	if (y >= -1.0 && y <= -1.0 + ROLL_HEIGHT) {
-		hovered.track = Math.floor((y - -1.0) / ROLL_HEIGHT * 4);
+		hovered.track = Math.min(3, Math.floor((y - -1.0) / ROLL_HEIGHT * 4));
 	}
 	{ //set beat:
 		let a = 0;
@@ -294,6 +294,7 @@ const TRANSPORT = {
 
 // --------------------------
 // functions here because they also control the music
+
 function pause() {
 	TRANSPORT.playing = false;
 	MUSIC.stop();
@@ -351,10 +352,10 @@ const TRACK_COLORS = [
 ];
 
 
-
 function States() {
 	this.dirty = 0;
 	this.ticks = LEVEL.ticksPerBeat * LEVEL.beatsPerMeasure * LEVEL.measures.length + 1;
+	this.dead = {tick:this.ticks};
 	this.ship = new Float32Array(6 * this.ticks);
 	this.enemies = []; //TODO!
 	this.keys = new Int32Array(LEVEL.keys.length);
@@ -485,6 +486,108 @@ const KEY_RADIUS = 0.25;
 const MAX_ROTATION = 2.0 * Math.PI * 5.0;
 const MAX_VELOCITY = 10.0;
 
+//construct from an array of interleaved x+y coords, e.g., [0,0, 1,1, ...]
+function Convex(xys) {
+	this.points = [];
+	for (let i = 0; i + 1 < xys.length; i += 2) {
+		this.points.push({x:xys[i],y:xys[i+1]});
+	}
+	let area = 0;
+	for (let i = 1; i < this.points.length; ++i) {
+		let a = this.points[0];
+		let b = this.points[i];
+		let c = this.points[(i+1)%this.points.length];
+		area += -(b.y-a.y)*(c.x-a.x) + (b.x-a.x)*(c.y-a.y);
+	}
+	console.assert(area > 0); //DEBUG
+	this.planes = [];
+	for (let i = 0; i < this.points.length; ++i) {
+		let a = this.points[i];
+		let b = this.points[(i+1)%this.points.length];
+		let perp = {x:-(b.y-a.y), y:b.x-a.x};
+		let len = Math.sqrt(perp.x*perp.x + perp.y*perp.y);
+		perp.x /= -len;
+		perp.y /= -len;
+		this.planes.push({
+			x:perp.x,
+			y:perp.y,
+			z:-(perp.x*a.x + perp.y*a.y)
+		});
+	}
+}
+
+/*
+//DEBUG
+LEVEL.terrain = [
+	{ color:[1,0,1], points:[-2,0,  5,0,  5,4,  -2,4] }
+]
+*/
+
+let CONVEXES = [];
+
+for (let t of LEVEL.terrain) {
+	CONVEXES.push(new Convex(t.points));
+}
+
+
+//convex is Convex as above
+//circle is {x:, y:, r:}
+function convexVsCircle(convex, circle) {
+
+	let closestDis2 = circle.r*circle.r;
+	let closestPt = null;
+
+	for (let i = 0; i < convex.points.length; ++i) {
+		let a = convex.points[i];
+		let b = convex.points[(i+1)%convex.points.length];
+		let along = {x:b.x-a.x, y:b.y-a.y};
+		let amt = (circle.x-a.x)*along.x + (circle.y-a.y)*along.y;
+
+		let len2 = along.x*along.x+along.y*along.y;
+		amt = Math.max(0, amt);
+		amt = Math.min(len2, amt);
+
+		amt /= len2;
+
+		let pt = {
+			x: amt * (b.x-a.x) + a.x,
+			y: amt * (b.y-a.y) + a.y
+		};
+
+		let dis2 = (pt.x-circle.x)*(pt.x-circle.x)+(pt.y-circle.y)*(pt.y-circle.y);
+
+		if (dis2 < closestDis2) {
+			closestPt = pt;
+			closestDis2 = dis2;
+		}
+	}
+
+	if (closestPt) {
+		return { dis2:closestDis2, pt:closestPt };
+	} else {
+		return null;
+	}
+
+	/*
+		there is a nicer way to do this where the code only checks corners between two failing edges.
+		but I need a closest point anyway.
+	
+	//check edges:
+	for (let eqn of convex.planes) {
+		let dis = circle.x * eqn.x + circle.y * eqn.y + eqn.z;
+		if (dis > circle.r) return false;
+	}
+
+	//check corners:
+	for (let p of convex.points) {
+		let dis2 = (p.x-circle.x)*(p.x-circle.x) + (p.y-circle.y)*(p.y-circle.y);
+		if (dis2 < circle.r*circle.r) return true;
+	}
+	*/
+
+	return false;
+}
+
 States.prototype.calculate = function States_calculate() {
 	if (this.dirty >= this.ticks) return; //everything is calculated
 	if (this.dirty == 0) {
@@ -493,7 +596,6 @@ States.prototype.calculate = function States_calculate() {
 		return;
 	}
 	const delta = 60.0 / (LEVEL.ticksPerBeat * LEVEL.beatsPerMinute);
-	const ship = this.getShip(this.dirty-1);
 	const controls = {};
 	{
 		let val = CONTROLS[Math.floor((this.dirty-1) / LEVEL.ticksPerBeat)];
@@ -503,117 +605,151 @@ States.prototype.calculate = function States_calculate() {
 		controls.jump = val & (1 << 0);
 	}
 
-	{ //damping:
-		const fac = Math.pow(0.5, delta / 1.5);
-		ship.vx *= fac;
-		ship.vy *= fac;
-		ship.vr *= Math.pow(0.5, delta / 0.25);
-	}
+	const ship = this.getShip(this.dirty-1);
 
-	//gravity:
-	ship.vy += delta * -GRAVITY;
-
-	function applyForce(x,y,fx,fy) {
-		ship.vx += delta * fx / SHIP_MASS;
-		ship.vy += delta * fy / SHIP_MASS;
-		//ship.vr += delta * (fx * -y + fy * x) / SHIP_MOMENT;
-	}
-
-	function angleServo(r, k) {
-		if (ship.r + Math.PI < r) r -= 2.0 * Math.PI;
-		if (ship.r - Math.PI > r) r += 2.0 * Math.PI;
-		let d = r - ship.r;
-		ship.vr += delta * k * d;
-	}
-
-	{ //jets:
-		let right = {
-			x:Math.cos(ship.r),
-			y:Math.sin(ship.r)
-		};
-		let up = {
-			x:-right.y,
-			y:right.x
-		};
-		if (controls.right) {
-			applyForce(right.x * JET_RADIUS, right.y * JET_RADIUS, JET_THRUST*up.x, JET_THRUST*up.y);
+	if (this.dead.tick >= this.dirty) {
+		if (this.dead.tick === this.dirty) {
+			this.dead.tick = this.ticks; //push death forward
 		}
-		if (controls.left) {
-			applyForce(right.x * -JET_RADIUS, right.y * -JET_RADIUS, JET_THRUST*up.x, JET_THRUST*up.y);
-		}
-		if (controls.right && controls.left) {
-			angleServo(0.0, 10.0);
-		} else if (controls.right) {
-			angleServo(0.3 * Math.PI, 10.0);
-		} else if (controls.left) {
-			angleServo(-0.3 * Math.PI, 10.0);
-		} else {
-			angleServo(0.0, 0.5);
-		}
-	}
 
-	/*
-	{ //teleportation (?):
-		if (controls.jump && (this.dirty % LEVEL.ticksPerBeat) === 0) {
-			let dx = ship.vx;
-			let dy = ship.vy;
-			let len = Math.sqrt(dx*dx + dy*dy);
-			if (len == 0) {
-				dx = 0.0;
-				dy = 1.0;
-			} else {
-				dx = dx / len;
-				dy = dy / len;
-			}
-			const JUMP_LENGTH = 3.0;
-			dx *= JUMP_LENGTH;
-			dy *= JUMP_LENGTH;
-			ship.x += dx;
-			ship.y += dy;
-		}
-	}
-	*/
-	{ //handbrake (sort of):
-		if (controls.jump && (this.dirty % LEVEL.ticksPerBeat) === 1) {
-			let dx, dy;
-			if (controls.left && controls.right) {
-				dx = 0.0; dy = 1.0;
-			} else if (controls.left) {
-				dx = 1.0; dy = 0.0;
-			} else if (controls.right) {
-				dx = -1.0; dy = 0.0;
-			} else {
-				dx = 0.0; dy = -1.0;
-			}
-			const JUMP_VELOCITY = 2.5;
-			ship.vx = (ship.vx * 0.5) + JUMP_VELOCITY * dx;
-			ship.vy = (ship.vy * 0.5) + JUMP_VELOCITY * dy;
-		}
-	}
-
-	//absolute limits on speed:
-	ship.vr = Math.max(Math.min(ship.vr, MAX_ROTATION), -MAX_ROTATION);
-	{
-		let vel2 = ship.vx * ship.vx + ship.vy * ship.vy;
-		if (vel2 > MAX_VELOCITY * MAX_VELOCITY) {
-			let fac = MAX_VELOCITY / Math.sqrt(vel2);
+		{ //damping:
+			const fac = Math.pow(0.5, delta / 1.5);
 			ship.vx *= fac;
 			ship.vy *= fac;
+			ship.vr *= Math.pow(0.5, delta / 0.25);
 		}
+
+		//gravity:
+		ship.vy += delta * -GRAVITY;
+
+		function applyForce(x,y,fx,fy) {
+			ship.vx += delta * fx / SHIP_MASS;
+			ship.vy += delta * fy / SHIP_MASS;
+			//ship.vr += delta * (fx * -y + fy * x) / SHIP_MOMENT;
+		}
+
+		function angleServo(r, k) {
+			if (ship.r + Math.PI < r) r -= 2.0 * Math.PI;
+			if (ship.r - Math.PI > r) r += 2.0 * Math.PI;
+			let d = r - ship.r;
+			ship.vr += delta * k * d;
+		}
+
+		{ //jets:
+			let right = {
+				x:Math.cos(ship.r),
+				y:Math.sin(ship.r)
+			};
+			let up = {
+				x:-right.y,
+				y:right.x
+			};
+			if (controls.right) {
+				applyForce(right.x * JET_RADIUS, right.y * JET_RADIUS, JET_THRUST*up.x, JET_THRUST*up.y);
+			}
+			if (controls.left) {
+				applyForce(right.x * -JET_RADIUS, right.y * -JET_RADIUS, JET_THRUST*up.x, JET_THRUST*up.y);
+			}
+			if (controls.right && controls.left) {
+				angleServo(0.0, 10.0);
+			} else if (controls.right) {
+				angleServo(0.3 * Math.PI, 10.0);
+			} else if (controls.left) {
+				angleServo(-0.3 * Math.PI, 10.0);
+			} else {
+				angleServo(0.0, 0.5);
+			}
+		}
+
+		{ //handbrake (sort of):
+			if (controls.jump && (this.dirty % LEVEL.ticksPerBeat) === 1) {
+				let dx, dy;
+				if (controls.left && controls.right) {
+					dx = 0.0; dy = 1.0;
+				} else if (controls.left) {
+					dx = 1.0; dy = 0.0;
+				} else if (controls.right) {
+					dx = -1.0; dy = 0.0;
+				} else {
+					dx = 0.0; dy = -1.0;
+				}
+				const JUMP_VELOCITY = 2.5;
+				ship.vx = (ship.vx * 0.5) + JUMP_VELOCITY * dx;
+				ship.vy = (ship.vy * 0.5) + JUMP_VELOCITY * dy;
+			}
+		}
+
+		//absolute limits on speed:
+		ship.vr = Math.max(Math.min(ship.vr, MAX_ROTATION), -MAX_ROTATION);
+		{
+			let vel2 = ship.vx * ship.vx + ship.vy * ship.vy;
+			if (vel2 > MAX_VELOCITY * MAX_VELOCITY) {
+				let fac = MAX_VELOCITY / Math.sqrt(vel2);
+				ship.vx *= fac;
+				ship.vy *= fac;
+			}
+		}
+
+		if (controls.shield) {
+			ship.x += 0.5 * delta * ship.vx;
+			ship.y += 0.5 * delta * ship.vy;
+			ship.r += 0.5 * delta * ship.vr;
+		} else {
+			ship.x += delta * ship.vx;
+			ship.y += delta * ship.vy;
+			ship.r += delta * ship.vr;
+		}
+
+		ship.r = ship.r % (2.0 * Math.PI);
+
+		{ //check vs level:
+			let circle = {x:ship.x, y:ship.y, r:0.9*GLOBE_RADIUS};
+			if (controls.shield) {
+				circle.r = 0.95*SHIELD_RADIUS;
+			}
+			let closeHit = null;
+			for (let convex of CONVEXES) {
+				let hit = convexVsCircle(convex, circle);
+				if (hit) {
+					if (controls.shield) {
+						if (closeHit === null || closeHit.dis2 > hit.dis2) {
+							closeHit = hit;
+						}
+					} else {
+						closeHit = hit;
+						break;
+					}
+				}
+			}
+			if (closeHit) {
+				if (controls.shield && closeHit.dis2 > 0.9*GLOBE_RADIUS * 0.9*GLOBE_RADIUS) {
+					let out = {
+						x:circle.x-closeHit.pt.x,
+						y:circle.y-closeHit.pt.y
+					};
+					let len = Math.sqrt((out.x*out.x)+(out.y*out.y));
+					out.x /= len;
+					out.y /= len;
+					let d = out.x * ship.vx + out.y * ship.vy;
+					if (d < 0.0) {
+						ship.vx += (1.5 * -d - d) * out.x;
+						ship.vy += (1.5 * -d - d) * out.y;
+					}
+				} else {
+					this.dead.tick = this.dirty;
+					this.dead.x = ship.x;
+					this.dead.y = ship.y;
+					this.dead.vx = ship.vx;
+					this.dead.vy = ship.vy;
+					ship.vx = 0;
+					ship.vy = 0;
+					ship.vr = 0;
+				}
+			}
+		}
+	} else { //already dead
+		//keep ship position
 	}
-
-	if (controls.shield) {
-		ship.x += 0.5 * delta * ship.vx;
-		ship.y += 0.5 * delta * ship.vy;
-		ship.r += 0.5 * delta * ship.vr;
-	} else {
-		ship.x += delta * ship.vx;
-		ship.y += delta * ship.vy;
-		ship.r += delta * ship.vr;
-	}
-
-	ship.r = ship.r % (2.0 * Math.PI);
-
 	this.setShip(this.dirty, ship);
 
 	// ---- key collection ---
@@ -623,8 +759,8 @@ States.prototype.calculate = function States_calculate() {
 		if (this.keys[i] == this.dirty) {
 			this.keys[i] = this.ticks + 1; //mark as uncollected
 		}
-		//any key not yet collected is fair game for collection:
-		if (this.keys[i] >= this.dirty) {
+		//any key not yet collected is fair game for collection, if not dead:
+		if (this.keys[i] >= this.dirty && (this.dead.tick > this.dirty)) {
 			const x = LEVEL.keys[i].x;
 			const y = LEVEL.keys[i].y;
 			let dis2 = (x-ship.x)*(x-ship.x) + (y-ship.y)*(y-ship.y);
@@ -684,6 +820,13 @@ for (let i = 0; i < CONTROLS.length; ++i) {
 function setTime(time) {
 	if (TRANSPORT.playhead == time) return;
 	TRANSPORT.playhead = time;
+
+	let loop_start = TRANSPORT.loop_start * LEVEL.beatsPerMeasure * 60.0 / LEVEL.beatsPerMinute;
+	let loop_end = TRANSPORT.loop_end * LEVEL.beatsPerMeasure * 60.0 / LEVEL.beatsPerMinute;
+
+	if (!TRANSPORT.playing) {
+		TRANSPORT.playhead = Math.max(loop_start, Math.min(loop_end, TRANSPORT.playhead));
+	}
 
 	let beat = TRANSPORT.playhead / 60.0 * LEVEL.beatsPerMinute;
 	{ //set camera position:
@@ -746,9 +889,20 @@ function update(elapsed) {
 		if (history && history.replaceState) history.replaceState({},"","?" + CONTROLS.encode());
 	}
 
+	let calcStart = performance.now();
 	STATES.calculate();
 	STATES.calculate();
 	STATES.calculate();
+	STATES.calculate();
+	/*
+	for (let i = 0; i < 100; ++i) {
+		const elapsed = performance.now() - calcStart;
+		if (elapsed > 0.010) {
+			window.DEBUG_steps = 2 + i;
+			break;
+		}
+		STATES.calculate();
+	}*/
 
 	if (TRANSPORT.loop_end > STATES.unlockedUntilMeasure) {
 		setLoop(Math.min(TRANSPORT.loop_start, STATES.unlockedUntilMeasure-1), STATES.unlockedUntilMeasure);
@@ -1075,13 +1229,31 @@ function draw() {
 
 		let state = STATES.interpolate(TRANSPORT.playhead);
 		window.DEBUG_state = state;
-		{ //draw ship:
+		let deadTime = STATES.dead.tick / LEVEL.ticksPerBeat / LEVEL.beatsPerMinute * 60.0;
+		if (deadTime < TRANSPORT.playhead) {
+			//draw explosion(?) of ship:
+			
+			function pickupEffect(ofs,amt, name, x,y, rx,ry, sx,sy) {
+				let tint = [1.0, 1.0, 1.0, 1.0-amt];
+				let s = 2.0 * (1.0 - (1.0-amt)*(1.0-amt));
+				for (const d of PICKUP_DIRS) {
+					drawObject(name, x+s*d.x,y+s*d.y, d.y,d.x, (1.0-amt)*sx,(1.0-amt)*sy, tint);
+				}
+			}
+
+			drawObject("dead", state.ship.x,state.ship.y-GLOBE_RADIUS, 1,0, 2*GLOBE_RADIUS,2*GLOBE_RADIUS);
+
+			let amt = (TRANSPORT.playhead - deadTime) / 1.5;
+			if (amt < 1.0) {
+				pickupEffect(STATES.dead.tick,amt, "fire", STATES.dead.x,STATES.dead.y, 1,0, 3*GLOBE_RADIUS,3*GLOBE_RADIUS);
+			}
+		} else {
+			//draw ship:
 			let at = {x:state.ship.x, y:state.ship.y};
 			let right = {x:Math.cos(state.ship.r), y:Math.sin(state.ship.r)};
 
 			if (state.jump) {
 				let amt = (TRANSPORT.playhead - state.jump.time) / (0.75 * 60.0 / LEVEL.beatsPerMinute);
-				console.log(amt);
 				if (amt < 1.0) {
 					let jr = {x:Math.cos(20*amt-TRANSPORT.playhead), y:Math.sin(20*amt-TRANSPORT.playhead)};
 					let r = GLOBE_RADIUS * (1 + 6*amt*amt);
@@ -1331,6 +1503,17 @@ function draw() {
 				uiObject("locked", x0, y, Infinity,2*HANDLE_HEIGHT);
 			}
 		}
+	}
+
+	if (STATES.dead.tick < STATES.ticks) {
+		const beat = STATES.dead.tick / LEVEL.ticksPerBeat;
+		const measure = Math.floor(beat / LEVEL.beatsPerMeasure);
+		const x0 = TRANSPORT.measurePos[measure];
+		const x1 = TRANSPORT.measurePos[measure+1];
+		const amt = (beat - measure * LEVEL.beatsPerMeasure) / LEVEL.beatsPerMeasure;
+		const x = amt * (x1-x0) + x0;
+		let y = -1.0 + ROLL_HEIGHT;
+		uiObject("dead", x, y, Infinity,1*HANDLE_HEIGHT);
 	}
 
 

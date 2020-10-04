@@ -59,11 +59,7 @@ TEXTURES.load = async function TEXTURES_load(callback) {
 		2*128, 0
 	);
 
-	add("jetPlume",
-		64,112, 48,96,
-		20,0, 108,128,
-		3*128, 1*128
-	);
+
 
 	add("shipDish",
 		16,64, 48,96,
@@ -100,6 +96,21 @@ TEXTURES.load = async function TEXTURES_load(callback) {
 		64,64, 120,120,
 		0,0, 128,128,
 		2*128, 1*128
+	);
+	add("jetPlume",
+		64,112, 48,96,
+		20,0, 108,128,
+		3*128, 1*128
+	);
+	add("fire",
+		64,64, 96,96,
+		0,0, 128,128,
+		4*128, 1*128
+	);
+	add("dead",
+		64,0, 112,112,
+		0,0, 128,128,
+		5*128, 1*128
 	);
 	console.log(OBJECTS);
 };
