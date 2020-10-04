@@ -32,6 +32,9 @@ async function load() {
 		INFO.innerHTML = "Loading textures...";
 		await TEXTURES.load();
 
+		INFO.innerHTML = "Loading sounds...";
+		await MUSIC.load();
+
 		INFO.style.display = "none";
 	} catch (e) {
 		INFO.innerHTML = "LOADING FAILED: " + e;
@@ -159,7 +162,7 @@ window.addEventListener('mousedown', function(evt){
 		console.log(hovered);
 		if (hovered.playhead) {
 			const wasPlaying = TRANSPORT.playing;
-			TRANSPORT.playing = false;
+			if (wasPlaying) pause();
 			MOUSE.drag = () => {
 				const hovered = MOUSE.getHovered();
 				if (hovered.beat !== null) {
@@ -172,7 +175,7 @@ window.addEventListener('mousedown', function(evt){
 					setTime(t);
 				}
 			};
-			MOUSE.dragEnd = () => { TRANSPORT.playing = wasPlaying; };
+			MOUSE.dragEnd = () => { if (wasPlaying) play(); };
 			MOUSE.drag();
 		} else if (hovered.loop_start) {
 			MOUSE.drag = () => {
@@ -216,6 +219,8 @@ window.addEventListener('mousedown', function(evt){
 			const bit = (1 << hovered.track);
 			const setting = (CONTROLS[hovered.beat] & (1 << hovered.track) ? 0x0 : 0xf);
 			TRACKS_BUFFER.dirty = true;
+			const wasPlaying = TRANSPORT.playing;
+			//if (wasPlaying) pause();
 			MOUSE.drag = () => {
 				const hovered = MOUSE.getHovered();
 				if (hovered.track !== null && hovered.beat !== null) {
@@ -229,6 +234,7 @@ window.addEventListener('mousedown', function(evt){
 					}
 				}
 			};
+			MOUSE.dragEnd = () => { if (wasPlaying) play(); };
 			MOUSE.drag();
 		}
 	}
@@ -253,7 +259,8 @@ window.addEventListener('mouseup', function(evt){
 window.addEventListener('keydown', function(evt){
 	if (evt.code === "Space") {
 		evt.preventDefault();
-		TRANSPORT.playing = !TRANSPORT.playing;
+		if (TRANSPORT.playing) pause();
+		else play();
 		return false;
 	}
 });
@@ -285,9 +292,35 @@ const TRANSPORT = {
 	playhead:0.0,
 	loop_start:0, //in measures
 	loop_end:4, //in measures
-	playing:true,
+	playing:false,
 	measurePos:new Float32Array(LEVEL.measures.length+1) //position of every measure's start+end in terms of [-1,1] window
 };
+
+// --------------------------
+// functions here because they also control the music
+function pause() {
+	TRANSPORT.playing = false;
+	MUSIC.stop();
+}
+
+function play() {
+	TRANSPORT.playing = true;
+	let muted = [ [], [], [], [] ];
+	for (let beat = TRANSPORT.loop_start * LEVEL.beatsPerMeasure; beat < TRANSPORT.loop_end * LEVEL.beatsPerMeasure; ++beat) {
+		const c = CONTROLS[beat];
+		for (let t = 0; t < 4; ++t) {
+			muted[t].push( (c & (1 << t)) ? false : true );
+		}
+	}
+	MUSIC.play(
+		LEVEL.beatsPerMinute,
+		LEVEL.beatsPerMeasure * TRANSPORT.loop_start,
+		LEVEL.beatsPerMeasure * TRANSPORT.loop_end,
+		muted,
+		TRANSPORT.playhead
+	);
+}
+// --------------------------
 
 const CONTROLS = new Uint8Array(LEVEL.beatsPerMeasure * LEVEL.measures.length);
 
@@ -318,6 +351,8 @@ const TRACK_COLORS = [
 	[0.5, 1.0, 0.5],
 	[1.0, 0.5, 0.5]
 ];
+
+
 
 function States() {
 	this.dirty = 0;
@@ -591,6 +626,9 @@ function setTime(time) {
 function setLoop(loop_start, loop_end) {
 	//TODO: clamp start/end based on locks in level and always force at least one measure to be inside loop range
 	if (TRANSPORT.loop_start == loop_start && TRANSPORT.loop_end == loop_end) return;
+
+	const old_end = TRANSPORT.loop_end;
+
 	TRANSPORT.loop_start = loop_start;
 	TRANSPORT.loop_end = loop_end;
 
@@ -599,6 +637,13 @@ function setLoop(loop_start, loop_end) {
 
 	let end = TRANSPORT.loop_end * LEVEL.beatsPerMeasure / (LEVEL.beatsPerMinute / 60.0);
 	TRANSPORT.playhead = Math.min(TRANSPORT.playhead, end);
+
+	if (old_end < TRANSPORT.loop_end) {
+		//re-queue music if changing loop range:
+		if (TRANSPORT.playing) {
+			play();
+		}
+	}
 
 	//set measure positions:
 	const LOOP_FACTOR = 1.0; //selected measures should be this much longer than unselected
@@ -612,7 +657,6 @@ function setLoop(loop_start, loop_end) {
 				+ (Math.max(loop_end,m) - loop_end)
 			) - 1.0;
 	}
-
 	TRACKS_BUFFER.dirty = true;
 }
 
@@ -642,15 +686,26 @@ function update(elapsed) {
 	let playhead = TRANSPORT.playhead;
 	let loop_start = TRANSPORT.loop_start * LEVEL.beatsPerMeasure * 60.0 / LEVEL.beatsPerMinute;
 	let loop_end = TRANSPORT.loop_end * LEVEL.beatsPerMeasure * 60.0 / LEVEL.beatsPerMinute;
+	let musicSkip = false;
 	if (TRANSPORT.playing) {
 		playhead += elapsed;
-		playhead = (playhead - loop_start) % (loop_end - loop_start) + loop_start;
-		if (playhead < loop_start) playhead += (loop_end - loop_start);
+		if (playhead < loop_start) {
+			playhead = loop_start;
+			musicSkip = true;
+		}
+		if (playhead > loop_end) {
+			playhead = (playhead - loop_start) % (loop_end - loop_start) + loop_start;
+			if (playhead < loop_start) playhead += (loop_end - loop_start);
+			musicSkip = true;
+		}
 	} else {
 		if (playhead < loop_start) playhead = loop_start;
 		if (playhead > loop_end) playhead = loop_end;
 	}
 	setTime(playhead);
+	if (musicSkip) {
+		play();
+	}
 
 	draw();
 
@@ -1149,7 +1204,10 @@ function draw() {
 		if (m.locked) {
 			const x0 = TRANSPORT.measurePos[i];
 			if (i < STATES.unlockedUntilMeasure) {
-				const y = -1.0 + ROLL_HEIGHT;
+				let y = -1.0 + ROLL_HEIGHT;
+				if (i == TRANSPORT.loop_start || i == TRANSPORT.loop_end) {
+					y += HANDLE_HEIGHT;
+				}
 				uiObject("unlocked", x0, y, Infinity,2*HANDLE_HEIGHT);
 			} else {
 				const y = -1.0 + 0.5 * ROLL_HEIGHT;
